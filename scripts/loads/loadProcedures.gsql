@@ -1,0 +1,17 @@
+use graph @graphname@
+drop job loadProcedures
+
+create loading job loadProcedures for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Procedures values ($0, $4, $5, $6, $7),
+        TO VERTEX SnomedCode values ($4, $5),
+        TO VERTEX SnomedCode values ($7, $8),
+        TO EDGE PROCEDURE_CODE values ($0, $4),
+        TO EDGE PROCEDURE_REASON_CODE values ($0, $7),
+        TO EDGE ENCOUNTER_FOR_PROCEDURE values ($0, $3),
+        TO EDGE PATIENT_HAS_PROCEDURE values ($0, $2)
+        using header="false", separator=",";
+}

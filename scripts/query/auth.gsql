@@ -1,0 +1,311 @@
+USE GRAPH synthea
+CREATE QUERY patientTable(/* Parameters here */) FOR GRAPH synthea { 
+  TYPEDEF TUPLE<STRING Name, STRING ID, INT Age, INT HealthcareCoverage, INT HealthcareExpense, STRING MaritalStatus, STRING Gender, STRING Race, STRING SSN> user;
+  HeapAccum<user>(500, HealthcareExpense DESC) @@output;
+  SumAccum<STRING> @race;
+  SumAccum<STRING> @gender;
+  SumAccum<STRING> @marital;
+  
+  everyone = {Patient.*};
+  
+  start = SELECT s from everyone:s - (PATIENT_RACE) - Race:t ACCUM s.@race = t.race_id;
+  start = SELECT s from everyone:s - (PATIENT_GENDER) - Gender:t ACCUM IF t.gender_id == "M" THEN s.@gender = "Male" ELSE IF t.gender_id == "F" THEN s.@gender = "Female" END;
+  
+  start = SELECT s from everyone:s POST-ACCUM IF s.maritalStatus == "M" THEN s.@marital = "Married" ELSE IF s.maritalStatus == "S" THEN s.@marital = "Single" END;
+  
+  start = SELECT s 
+          FROM everyone:s
+          ACCUM @@output += (user(s.firstName + " " + s.lastName, s.patient_id, datetime_diff(now(), s.birthday) / 60 / 60 / 24 / 365, s.healthcareCoverage, s.healthcareExpense, s.@marital, s.@gender, s.@race, s.ssn));
+  
+  PRINT @@output;
+}
+CREATE QUERY checkQuery( STRING access_token) FOR GRAPH synthea { 
+  /* Write query logic here */ 
+  seed = {User.*};
+  
+  result = SELECT tk from seed:s - (USER_HAS_TOKEN:ut) - AuthToken:tk   WHERE ((ut.actif == TRUE)  and (access_token == tk.value)) ;
+  print result;
+}
+CREATE QUERY logoutQuery(STRING userID,STRING access_token) FOR GRAPH synthea { 
+  /* Write query logic here */ 
+  print "Work in progress";
+}
+CREATE QUERY loginQuery(STRING username,STRING password) FOR GRAPH synthea { 
+MapAccum<STRING, STRING> @@info; 
+
+ 
+  seed = {User.*};
+  /* password -> crypt salt -> check */
+
+  result = SELECT s from seed:s where s.username == username and s.password == password
+      POST-ACCUM 
+            @@info += ("id" -> s.id),
+            @@info += ("name" -> s.name ),
+            @@info += ("email" -> s.email);
+  PRINT @@info as res;
+}
+CREATE QUERY patientSearch(STRING argument) FOR GRAPH synthea SYNTAX v2 { 
+  TYPEDEF TUPLE<STRING Name, STRING ID, INT Age, INT HealthcareCoverage, INT HealthcareExpense, STRING MaritalStatus, STRING Gender, STRING Race, STRING SSN> user;
+  HeapAccum<user>(100000, HealthcareExpense DESC) @@output;
+  SumAccum<STRING> @race;
+  SumAccum<STRING> @gender;
+  SumAccum<STRING> @marital;
+  SumAccum<INT> @inspected;
+  STRING likeArg;
+  
+  likeArg = trim(lower("%" + argument + "%"));
+
+  everyone = {Patient.*};
+  
+  start = SELECT s from everyone:s - (PATIENT_RACE) - Race:t ACCUM s.@race = t.race_id;
+  start = SELECT s from everyone:s - (PATIENT_GENDER) - Gender:t ACCUM IF t.gender_id == "M" THEN s.@gender = "Male" ELSE IF t.gender_id == "F" THEN s.@gender = "Female" END;
+  
+  start = SELECT s from everyone:s POST-ACCUM IF s.maritalStatus == "M" THEN s.@marital = "Married" ELSE IF s.maritalStatus == "S" THEN s.@marital = "Single" END;
+  
+  checkAttributes = SELECT s
+                    FROM everyone:s
+                    WHERE ((trim(lower(s.firstName)) LIKE likeArg) or (trim(lower(s.lastName)) LIKE likeArg) or (trim(lower(s.firstName + " " + s.lastName)) LIKE likeArg) or (trim(lower(s.ssn)) LIKE likeArg)) and s.@inspected == 0
+                    POST-ACCUM @@output += (user(s.firstName + " " + s.lastName, s.patient_id, datetime_diff(now(), s.birthday) / 60 / 60 / 24 / 365, s.healthcareCoverage, s.healthcareExpense, s.@marital, s.@gender, s.@race, s.ssn)), s.@inspected += 1;
+  
+  checkProviders = SELECT t FROM everyone:s - (PATIENT_ADDRESS) - Address:t
+                   WHERE (trim(lower(t.name)) LIKE likeArg) and s.@inspected == 0 
+                   POST-ACCUM @@output += (user(s.firstName + " " + s.lastName, s.patient_id, datetime_diff(now(), s.birthday) / 60 / 60 / 24 / 365, s.healthcareCoverage, s.healthcareExpense, s.@marital, s.@gender, s.@race, s.ssn)), s.@inspected += 1;
+  
+ checkOrgs1 = SELECT t FROM everyone:s - (ENCOUNTER_FOR_PATIENT) - Encounter:r - (ENCOUNTER_HAS_PROVIDER) - Providers - (PROVIDER_HAS_ORGANIZATION) - Organizations:t WHERE (trim(lower(t.name)) LIKE likeArg) and s.@inspected == 0
+              POST-ACCUM @@output += (user(s.firstName + " " + s.lastName, s.patient_id, datetime_diff(now(), s.birthday) / 60 / 60 / 24 / 365, s.healthcareCoverage, s.healthcareExpense, s.@marital, s.@gender, s.@race, s.ssn)), s.@inspected += 1;
+  
+  checkOrgs2 = SELECT t FROM everyone:s - (ENCOUNTER_FOR_PATIENT) - Encounter:r -(ENCOUNTER_UNDER_ORGANIZATION) - Organizations:t WHERE (trim(lower(t.name)) LIKE likeArg) and s.@inspected == 0
+              POST-ACCUM @@output += (user(s.firstName + " " + s.lastName, s.patient_id, datetime_diff(now(), s.birthday) / 60 / 60 / 24 / 365, s.healthcareCoverage, s.healthcareExpense, s.@marital, s.@gender, s.@race, s.ssn)), s.@inspected += 1;
+  
+  PRINT @@output;
+}
+
+CREATE QUERY patientSimilar(VERTEX<Patient> inPatient) FOR GRAPH synthea SYNTAX v2 {
+  TYPEDEF TUPLE<STRING Name, STRING ID, INT Age, INT HealthcareCoverage, INT HealthcareExpense, STRING MaritalStatus, STRING Gender, STRING Race, STRING SSN> user;
+  HeapAccum<user>(100000, HealthcareExpense DESC) @@output;
+  SumAccum<STRING> @race;
+  SumAccum<STRING> @gender;
+  SumAccum<STRING> @marital;
+  SumAccum<INT> @score;
+  
+  singleton = {inPatient};
+  
+  providers = SELECT t from singleton:s - (ENCOUNTER_FOR_PATIENT) - Encounter:r - (ENCOUNTER_HAS_PROVIDER) - Providers:t;
+  
+  organizations = SELECT t from providers:s - (PROVIDER_HAS_ORGANIZATION) - Organizations:t;
+  organizations2 = SELECT t from singleton:s - (ENCOUNTER_FOR_PATIENT) - Encounter:r -(ENCOUNTER_UNDER_ORGANIZATION) - Organizations:t;
+  
+  sameProvider = SELECT t from providers:s - (ENCOUNTER_HAS_PROVIDER) - Encounter:r - (ENCOUNTER_FOR_PATIENT) - Patient:t POST-ACCUM t.@score += 5;
+  sameOrganization = SELECT t from organizations:s - (PROVIDER_HAS_ORGANIZATION) - Providers:p - (ENCOUNTER_HAS_PROVIDER) - Encounter:r - (ENCOUNTER_FOR_PATIENT) - Patient:t POST-ACCUM t.@score += 4;
+  sameOrgnizations2 = SELECT t from organizations2:s - (ENCOUNTER_UNDER_ORGANIZATION) - Encounter:r - (ENCOUNTER_FOR_PATIENT) - Patient:t POST-ACCUM t.@score += 4;
+  
+  payers = SELECT t from singleton:s - (PAYER_TRANSITION:e) - Payer:t;
+  samePayers = SELECT t from payers:s - (PAYER_TRANSITION:e) - Patient:t POST-ACCUM t.@score += 5;
+  
+  cities = SELECT t from singleton:s - (PATIENT_ADDRESS) - Address - (ADDRESS_CITY) - City:t WHERE t.cityName != "";
+  sameCities = SELECT t from cities:s - (ADDRESS_CITY) - Address - (PATIENT_ADDRESS) - Patient:t POST-ACCUM t.@score += 4;
+  
+  counties = SELECT t from singleton:s - (PATIENT_ADDRESS) - Address - (ADDRESS_COUNTY) - County:t WHERE t.countyName != "";
+  sameCities = SELECT t from counties:s - (ADDRESS_COUNTY) - Address - (PATIENT_ADDRESS) - Patient:t POST-ACCUM t.@score += 3;
+  
+  ethnicities = SELECT t from singleton:s - (PATIENT_ETHNICITY) - Ethnicity:t;
+  sameEthnicities = SELECT t from ethnicities:s - (PATIENT_ETHNICITY) - Patient:t POST-ACCUM t.@score += 1;
+  
+  races = SELECT t from singleton:s - (PATIENT_RACE) - Race:t;
+  sameRaces = SELECT t from races:s - (PATIENT_RACE) - Patient:t POST-ACCUM t.@score += 1;
+  
+  everyone = {Patient.*};
+  sort = SELECT s from everyone:s WHERE s != inPatient ORDER BY s.@score DESC LIMIT 10;
+  
+  start = SELECT s from sort:s - (PATIENT_RACE) - Race:t ACCUM s.@race = t.race_id;
+  start = SELECT s from sort:s - (PATIENT_GENDER) - Gender:t ACCUM IF t.gender_id == "M" THEN s.@gender = "Male" ELSE IF t.gender_id == "F" THEN s.@gender = "Female" END;
+  
+  start = SELECT s from sort:s POST-ACCUM IF s.maritalStatus == "M" THEN s.@marital = "Married" ELSE IF s.maritalStatus == "S" THEN s.@marital = "Single" END;
+  
+  sort = SELECT s from sort:s POST-ACCUM @@output += (user(s.firstName + " " + s.lastName, s.patient_id, datetime_diff(now(), s.birthday) / 60 / 60 / 24 / 365, s.healthcareCoverage, s.healthcareExpense, s.@marital, s.@gender, s.@race, s.ssn));
+  
+  print @@output;
+}
+
+
+CREATE QUERY patientSummary(VERTEX<Patient> inPatient) FOR GRAPH synthea SYNTAX v2 {
+  TYPEDEF TUPLE<STRING User, STRING Info, DATETIME dt> element;
+  HeapAccum<element>(100000, dt DESC) @@payers;
+  HeapAccum<element>(100000, dt DESC) @@providers;
+  STRING Name, Birthplace, MaritalStatus, SSN, pRace, pEthnicity, pGender, RecentPayer, RecentPayerPhone, RecentProvider, RecentProviderOrg;
+  DOUBLE HealthcareCoverage, HealthcareExpense;
+  INT Age;
+  DATETIME Birthday;
+  SumAccum<STRING> @@Address;
+  
+  singleton = {inPatient};
+  
+  Name = inPatient.firstName + " " + inPatient.lastName;
+  Birthplace = inPatient.birthplace;
+  Birthday = inPatient.birthday;
+  Age = datetime_diff(now(), Birthday) / 60 / 60 / 24 / 365;
+  
+  MaritalStatus = inPatient.maritalStatus;
+  IF MaritalStatus == "M" THEN
+    MaritalStatus = "Married";
+  ELSE IF MaritalStatus == "S" THEN
+    MaritalStatus = "Single";
+  END;
+  
+  SSN = inPatient.ssn;
+  HealthcareCoverage = inPatient.healthcareCoverage; // Smaller
+  HealthcareExpense = inPatient.healthcareExpense; // Larger
+  
+  race = SELECT s from singleton:s - (PATIENT_RACE) - Race:t POST-ACCUM pRace = t.race_id;
+  ethnicity = SELECT s from singleton:s - (PATIENT_ETHNICITY) - Ethnicity:t POST-ACCUM pRace = t.ethnicity_id;
+  
+  address = SELECT t from singleton:s - (PATIENT_ADDRESS) - Address:t WHERE t.name != "" POST-ACCUM @@Address += t.name;
+  address2 = SELECT s from address:s - (ADDRESS_CITY) - City:t WHERE t.cityName != "" POST-ACCUM @@Address += " " + t.cityName;
+  address2 = SELECT s from address:s - (ADDRESS_COUNTY) - County:t WHERE t.countyName != "" POST-ACCUM @@Address += ", " + t.countyName;
+  address2 = SELECT s from address:s - (ADDRESS_ZIPCODE) - ZipCode:t WHERE t.zip_id != "" POST-ACCUM @@Address += " " + t.zip_id;
+  
+  gender = SELECT t from singleton:s - (PATIENT_GENDER) - Gender:t POST-ACCUM pGender = t.gender_id;
+  IF pGender == "M" THEN
+    pGender = "Male";
+  ELSE IF pGender == "F" THEN
+    pGender = "Female";
+  END;
+  
+  payers = SELECT t from singleton:s - (PAYER_TRANSITION:e) - Payer:t ACCUM @@payers += (element(t.name, t.phone, e.startYear));
+  RecentPayer = @@payers.top().User;
+  RecentPayerPhone = @@payers.top().Info;
+  
+  providers = SELECT t from singleton:s - (ENCOUNTER_FOR_PATIENT) - Encounter:r - (ENCOUNTER_HAS_PROVIDER) - Providers:t - (PROVIDER_HAS_ORGANIZATION) - Organizations:o ACCUM @@providers += (element(t.name, o.name, r.startTime)); 
+  RecentProvider = @@providers.top().User;
+  RecentProviderOrg = @@providers.top().Info;
+  
+  PRINT Name, Birthplace, Birthday, SSN, @@Address, MaritalStatus, pRace, pEthnicity, pGender, Age, RecentPayer, RecentPayerPhone, RecentProvider, RecentProviderOrg, HealthcareCoverage, HealthcareExpense;
+}
+
+
+CREATE QUERY patientTimeline(VERTEX<Patient> inPatient, DATETIME inputMinDate, DATETIME inputMaxDate) FOR GRAPH synthea {
+  TYPEDEF TUPLE<STRING source, STRING title, STRING content, DATETIME dt> element;
+  HeapAccum<element>(100000, dt DESC) @@outputDesc;
+  HeapAccum<element>(100000, dt ASC) @@fullTimeline;
+  DATETIME firstActive;
+  DATETIME lastActive;
+  
+  singleton = {inPatient};
+  
+  IF inPatient.birthday > inputMinDate and inPatient.birthday < inputMaxDate THEN
+    @@outputDesc += (element("Birthday", "Patient was born", "", inPatient.birthday));
+  END;
+  
+  allergies = SELECT t from singleton:s - (PATIENT_HAS_ALLERGY) - Allergies:t
+              POST-ACCUM IF t.startDate > inputMinDate and t.startDate < inputMaxDate THEN
+                       @@outputDesc += (element("Allergy", "Started Allergy code: " + t.allergy_code, t.description, t.startDate)) END,
+                         IF t.endDate > inputMinDate and t.endDate < inputMaxDate THEN
+                       @@outputDesc += (element("Allergy", "Ended Allergy code: " + t.allergy_code, t.description, t.endDate)) END,
+                       @@fullTimeline += (element("Allergy", "Started Allergy code: " + t.allergy_code, t.description, t.startDate)),
+                       @@fullTimeline += (element("Allergy", "Ended Allergy code: " + t.allergy_code, t.description, t.endDate));
+
+  medications = SELECT t from singleton:s - (PATIENT_HAS_MEDICATION) - Medication:t
+              POST-ACCUM IF t.startDate > inputMinDate and t.startDate < inputMaxDate THEN
+                       @@outputDesc += (element("Medication", "Started Medication code: " + t.medication_code, t.description, t.startDate)) END,
+                         IF t.endDate > inputMinDate and t.endDate < inputMaxDate THEN
+                       @@outputDesc += (element("Medication", "Ended Medication code: " + t.medication_code, t.description, t.endDate)) END,
+                       @@fullTimeline += (element("Medication", "Started Medication code: " + t.medication_code, t.description, t.startDate)), @@fullTimeline += (element("Medication", "Ended Medication code: " + t.medication_code, t.description, t.endDate));
+  
+  procedures = SELECT t from singleton:s - (PATIENT_HAS_PROCEDURE) - Procedures:t
+              POST-ACCUM IF t.dateOfProcedure > inputMinDate and t.dateOfProcedure < inputMaxDate THEN
+                       @@outputDesc += (element("Procedure", "Had $" + to_string(t.baseCost) + " Procedure [Code: " + t.procedure_code + "]", t.description, t.dateOfProcedure)) END,
+                       @@fullTimeline += (element("Procedure", "Had $" + to_string(t.baseCost) + " Procedure [Code: " + t.procedure_code + "]", t.description, t.dateOfProcedure));
+  
+  careplans = SELECT t from singleton:s - (PATIENT_HAS_CAREPLAN) - Careplans:t
+              POST-ACCUM IF t.startDate > inputMinDate and t.startDate < inputMaxDate THEN
+                       @@outputDesc += (element("Careplan","Started Careplan [ID: " + t.careplan_id + "]", t.description, t.startDate)) END,
+                         IF t.endDate > inputMinDate and t.endDate < inputMaxDate THEN
+                       @@outputDesc += (element("Careplan","Ended Careplan [ID: " + t.careplan_id + "]", t.description, t.endDate)) END,
+                       @@fullTimeline += (element("Careplan","Started Careplan [ID: " + t.careplan_id + "]", t.description, t.startDate)), @@fullTimeline += (element("Careplan","Ended Careplan [ID: " + t.careplan_id + "]", t.description, t.endDate));
+  
+  conditions = SELECT t from singleton:s - (PATIENT_HAS_CONDITION) - Conditions:t
+              POST-ACCUM IF t.startDate > inputMinDate and t.startDate < inputMaxDate THEN
+                       @@outputDesc += (element("Condition", "Diagnosed condition code: " + t.condition_code, t.description, t.startDate)) END,
+                         IF t.endDate > inputMinDate and t.endDate < inputMaxDate THEN
+                       @@outputDesc += (element("Condition", "Cured/resolved condition code: " + t.condition_code, t.description, t.endDate)) END,
+                       @@fullTimeline += (element("Condition", "Diagnosed condition code: " + t.condition_code, t.description, t.startDate)), @@fullTimeline += (element("Condition", "Cured/resolved condition code: " + t.condition_code, t.description, t.endDate));
+  
+  immunizations = SELECT t from singleton:s - (PATIENT_HAS_IMMUNIZATION) - Immunizations:t
+              POST-ACCUM IF t.dateOfImmunization > inputMinDate and t.dateOfImmunization < inputMaxDate THEN
+                       @@outputDesc += (element("Immunization", "Had $" + to_string(t.baseCost) + " Immunization [Code: " + t.immunization_code + "]", t.description, t.dateOfImmunization)) END, @@fullTimeline += (element("Immunization", "Had $" + to_string(t.baseCost) + " Immunization [Code: " + t.immunization_code + "]", t.description, t.dateOfImmunization));
+  
+  observations = SELECT t from singleton:s - (OBSERVATION_FOR_PATIENT) - Observations:t
+              POST-ACCUM IF t.dateOfObservation > inputMinDate and t.dateOfObservation < inputMaxDate THEN
+                       @@outputDesc += (element("Observation", "Underwent observation [Value: " + t.obsValue + ", Code: " + t.observation_code + "]", t.description, t.dateOfObservation)) END, @@fullTimeline += (element("Observation", "Underwent observation [Value: " + t.obsValue + ", Code: " + t.observation_code + "]", t.description, t.dateOfObservation));
+  
+  notes = SELECT t from singleton:s - (PATIENT_NOTE:e) - Notes:t
+              ACCUM IF e.dateOfNote > inputMinDate and e.dateOfNote < inputMaxDate THEN
+                       @@outputDesc += (element("Note", "Added Note Regarding " + t.historyOfPresentIllness, t.chiefComplaint, e.dateOfNote)) END,
+                       @@fullTimeline += (element("Note", "Added Note Regarding " + t.historyOfPresentIllness, t.chiefComplaint, e.dateOfNote));
+  
+  devices = SELECT t from singleton:s - (PATIENT_HAS_DEVICE) - Device:t
+              POST-ACCUM IF t.startDate > inputMinDate and t.startDate < inputMaxDate THEN
+                       @@outputDesc += (element("Device", "Received Medical Device [Code: " + t.UDI_code + "]", t.description, t.startDate)) END,
+                         IF t.endDate > inputMinDate and t.endDate < inputMaxDate THEN
+                       @@outputDesc += (element("Device", "Stopped Using Medical Device [Code: " + t.UDI_code + "]", t.description, t.endDate)) END,
+                       @@fullTimeline += (element("Device", "Received Medical Device [Code: " + t.UDI_code + "]", t.description, t.startDate)), @@fullTimeline += (element("Device", "Stopped Using Medical Device [Code: " + t.UDI_code + "]", t.description, t.endDate));
+  
+  imaging = SELECT t from singleton:s - (PATIENT_HAS_IMAGING) - ImagingStudies:t
+              ACCUM IF t.dateOfImage > inputMinDate and t.dateOfImage < inputMaxDate THEN
+                       @@outputDesc += (element("Imaging", t.SOPDescription, t.modalityDescription, t.dateOfImage)) END,
+                       @@fullTimeline += (element("Imaging", t.SOPDescription, t.modalityDescription, t.dateOfImage));
+  
+  encounters = SELECT t from singleton:s - (ENCOUNTER_FOR_PATIENT) - Encounter:t
+              POST-ACCUM IF t.startTime > inputMinDate and t.startTime < inputMaxDate THEN
+                       @@outputDesc += (element("Encounter", "Started " + t.classType + " Medical Encounter [$" + to_string(t.baseEncounterCost) + "]", "Patient payed $" + to_string(t.payerCoverage) + " out of pocket.", t.startTime)) END,
+                         IF t.endTime > inputMinDate and t.endTime < inputMaxDate THEN
+                       @@outputDesc += (element("Encounter", "Finished " + t.classType + " Medical Encounter [$" + to_string(t.baseEncounterCost) + "]", "Patient payed $" + to_string(t.payerCoverage) + " out of pocket.", t.endTime)) END,
+                       @@fullTimeline += (element("Encounter", "Started " + t.classType + " Medical Encounter [$" + to_string(t.baseEncounterCost) + "]", "Patient payed $" + to_string(t.payerCoverage) + " out of pocket.", t.startTime)), @@fullTimeline += (element("Encounter", "Finished " + t.classType + " Medical Encounter [$" + to_string(t.baseEncounterCost) + "]", "Patient payed $" + to_string(t.payerCoverage) + " out of pocket.", t.endTime));
+  
+  payers = SELECT t from singleton:s - (PAYER_TRANSITION:e) - Payer:t
+              ACCUM IF e.startYear > inputMinDate and e.startYear < inputMaxDate THEN
+                       @@outputDesc += (element("Payer Transition", "Transitioned to Payer " + t.name + " [" + t.phone + "]", "Covered " + to_string(t.coveredEncounters) + " encounters, totalling $" + to_string(t.amountCovered) + ".", e.startYear)) END,
+                         IF e.endYear > inputMinDate and e.endYear < inputMaxDate THEN
+                       @@outputDesc += (element("Payer Transition", "End of Payer " + t.name + " [" + t.phone + "]", "Covered " + to_string(t.coveredEncounters) + " encounters, totalling $" + to_string(t.amountCovered) + ".", e.endYear)) END,
+                       @@fullTimeline += (element("Payer Transition", "Transitioned to Payer " + t.name + " [" + t.phone + "]", "Covered " + to_string(t.coveredEncounters) + " encounters, totalling $" + to_string(t.amountCovered) + ".", e.startYear)), @@fullTimeline += (element("Payer Transition", "End of Payer " + t.name + " [" + t.phone + "]", "Covered " + to_string(t.coveredEncounters) + " encounters, totalling $" + to_string(t.amountCovered) + ".", e.endYear));
+  
+ WHILE year(@@fullTimeline.top().dt) == 1970 DO
+  @@fullTimeline.pop();
+ END;
+  
+  firstActive = @@fullTimeline.top().dt;
+  
+  WHILE @@fullTimeline.size() > 1 DO
+    @@fullTimeline.pop();
+  END;
+  
+  lastActive = @@fullTimeline.top().dt;
+  
+  PRINT lastActive;
+  PRINT firstActive;
+  PRINT @@outputDesc;
+}
+
+
+
+CREATE QUERY providerTable(/* Parameters here */) FOR GRAPH synthea SYNTAX v2 { 
+  TYPEDEF TUPLE<STRING Name, STRING ID, STRING Specialty, INT Encounters, STRING Gender, STRING Organization, STRING City> user;
+  HeapAccum<user>(100000, Encounters DESC) @@output;
+  SumAccum<STRING> @gender;
+  SumAccum<STRING> @organization;
+  SumAccum<STRING> @city;
+  
+  everyone = {Providers.*};
+  
+  start = SELECT s from everyone:s - (PROVIDER_GENDER) - Gender:t ACCUM IF t.gender_id == "M" THEN s.@gender = "Male" ELSE IF t.gender_id == "F" THEN s.@gender = "Female" END;
+  
+  start = SELECT s from everyone:s - (PROVIDER_HAS_ORGANIZATION) - Organizations:t ACCUM s.@organization = t.name;
+  
+  start = SELECT s from everyone:s - (PROVIDER_ADDRESS) - Address - (ADDRESS_CITY) - City:t ACCUM s.@city = t.cityName;
+  
+  start = SELECT s 
+          FROM everyone:s
+          POST-ACCUM @@output += (user(s.name, s.provider_id, s.speciality, s.utilization, s.@gender, s.@organization, s.@city));
+  
+  PRINT @@output; 
+}

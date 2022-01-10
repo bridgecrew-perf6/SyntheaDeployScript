@@ -1,0 +1,12 @@
+use graph @graphname@
+drop job loadPatientSymptoms
+
+create loading job loadPatientSymptoms for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Symptoms values($0, $8, $9, $7),
+        TO EDGE PATIENT_HAS_SYMPTOM values($1, $0, $5, $6)
+        using header="false", separator=",";
+}

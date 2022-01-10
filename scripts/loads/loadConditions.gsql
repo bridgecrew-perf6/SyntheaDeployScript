@@ -1,0 +1,15 @@
+use graph @graphname@
+drop job loadConditions
+
+Create loading job loadConditions for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Conditions values ($0, $5, $6, $1, $2),
+        TO VERTEX SnomedCode values ($5, $6),
+        TO EDGE CONDITION_CODE values ($0, $5),
+        TO EDGE PATIENT_HAS_CONDITION values ($0, $3),
+        TO EDGE ENCOUNTER_FOR_CONDITION values ($0, $4)
+        using header="false", separator=",";
+}

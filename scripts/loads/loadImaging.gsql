@@ -1,0 +1,15 @@
+use graph @graphname@
+drop job loadImaging
+
+create loading job loadImaging for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX ImagingStudies values ($0, $4, $5, $6, $7, $8, $9, $1),
+        TO VERTEX SnomedCode values ($4, $5),
+        TO EDGE PATIENT_HAS_IMAGING values ($0, $2),
+        TO EDGE ENCOUNTER_FOR_IMAGING values ($0, $3),
+        TO EDGE IMAGING_CODE values ($0, $4)
+        using header="false", separator=",";
+}

@@ -1,0 +1,9 @@
+use graph @graphname@
+drop job loadPayerTransitions
+
+create loading job loadPayerTransitions for graph @graphname@ {
+
+    define filename f1;
+
+    load f1 TO EDGE PAYER_TRANSITION values ($3, $0, $1, $2, $4) using header="false", separator=",";
+}

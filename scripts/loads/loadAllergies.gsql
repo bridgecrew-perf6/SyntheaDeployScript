@@ -1,0 +1,15 @@
+use graph @graphname@
+drop job loadAllergies
+
+create loading job loadAllergies for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Allergies values ($0, $5, $6, $1, $2),
+        TO VERTEX SnomedCode values ($5, $6),
+        TO EDGE PATIENT_HAS_ALLERGY values ($0, $3),
+        TO EDGE ALLERGY_CODE values ($0, $5),
+        TO EDGE ENCOUNTER_FOR_ALLERGY values ($0, $4)
+        using header="false", separator=",";
+    }

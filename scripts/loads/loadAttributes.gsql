@@ -1,0 +1,12 @@
+use graph @graphname@
+drop job loadAttributes
+
+create loading job loadAttributes for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Attribute values($1, $2),
+        TO EDGE PATIENT_HAS_ATTRIBUTE values($0, $1)
+        using header="false", separator="|" ;
+}

@@ -1,0 +1,17 @@
+use graph @graphname@
+drop job loadCareplans
+
+create loading job loadCareplans for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Careplans values ($0, $6, $1, $2),
+        TO VERTEX SnomedCode values ($5, $6),
+        TO VERTEX SnomedCode values ($7, $8),
+        TO EDGE PATIENT_HAS_CAREPLAN values ($0, $3),
+        TO EDGE ENCOUNTER_FOR_CAREPLAN values ($0, $4),
+        TO EDGE CAREPLAN_CODE values ($0, $5),
+        TO EDGE CAREPLAN_REASON_CODE values ($0, $7)
+        using header="false", separator=",";
+    }

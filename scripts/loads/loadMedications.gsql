@@ -1,0 +1,18 @@
+use graph @graphname@
+drop job loadMedications
+
+create loading job loadMedications for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Medication values ($0, $6, $7, $1, $2, $8, $9, $10, $11),
+        TO VERTEX SnomedCode values ($6, $7),
+        TO VERTEX SnomedCode values ($12, $13),
+        TO EDGE MEDICATION_PAYER values ($0, $4),
+        TO EDGE PATIENT_HAS_MEDICATION values ($0, $3),
+        TO EDGE MEDICATION_REASON_CODE values ($0, $12),
+        TO EDGE MEDICATION_CODE values ($0, $6),
+        TO EDGE ENCOUNTER_FOR_MEDICATION values ($0, $5)
+        using header="false", separator=",";
+}

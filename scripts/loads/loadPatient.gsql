@@ -1,0 +1,22 @@
+use graph @graphname@
+drop job loadPatient
+
+create loading job loadPatient for graph @graphname@{
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Patient values ($0, $8, $7, $10, $1, $3, $4, $5, $23, $24, $9, $6, $11, $15),
+        TO VERTEX Gender values ($14),
+        TO VERTEX Race values ($12),
+        TO VERTEX Ethnicity values ($13),
+        TO VERTEX Address values (gsql_concat($21, $22), $16, $21, $22),
+        TO EDGE PATIENT_GENDER values ($0, $14),
+        TO EDGE PATIENT_RACE values ($0, $12),
+        TO EDGE PATIENT_ETHNICITY values ($0, $13),
+        TO EDGE PATIENT_ADDRESS values ($0, gsql_concat($21, $22)),
+        TO EDGE ADDRESS_COUNTY values (gsql_concat($21, $22), $19),
+        TO EDGE ADDRESS_ZIPCODE values (gsql_concat($21, $22), $20),
+        TO EDGE ADDRESS_CITY values (gsql_concat($21, $22), $17)
+        using header="false", separator=",";
+}

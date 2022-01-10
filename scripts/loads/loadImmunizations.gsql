@@ -1,0 +1,16 @@
+use graph @graphname@
+drop job loadImmunizations
+
+create loading job loadImmunizations for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Immunizations values ($0, $4, $5, $1, $6),
+        TO VERTEX SnomedCode values ($4, $5),
+        TO EDGE IMMUNIZATION_CODE values ($0, $4),
+        TO EDGE PATIENT_HAS_IMMUNIZATION values ($0, $2),
+        TO EDGE ENCOUNTER_FOR_IMMUNIZATION values ($0, $3)
+        using header="false", separator=",";
+
+}

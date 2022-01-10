@@ -1,0 +1,15 @@
+use graph @graphname@
+drop job loadLocations
+
+create loading job loadLocations for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX State values ($3),
+        TO VERTEX County values (gsql_concat($3, $5), $5),
+        TO VERTEX City values (gsql_concat($3, $2), $2),
+        TO EDGE STATE_HAS_COUNTY values ($3, gsql_concat($3, $5)),
+        TO EDGE COUNTY_HAS_CITY values (gsql_concat($3, $5), gsql_concat($3, $2))
+        using header="false", separator=",";
+}

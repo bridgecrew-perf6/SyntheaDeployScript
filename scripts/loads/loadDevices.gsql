@@ -1,0 +1,16 @@
+use graph @graphname@
+drop job loadDevices
+
+create loading job loadDevices for graph @graphname@ {
+
+    define filename f1;
+
+    load f1
+        TO VERTEX Device values ($6, $5, $0, $1),
+        TO VERTEX SnomedCode values ($4, $5),
+        TO EDGE PATIENT_HAS_DEVICE values ($6, $2),
+        TO EDGE DEVICE_CODE values ($6, $4),
+        TO EDGE ENCOUNTER_FOR_DEVICE values ($6, $3)
+        using header="false", separator=",";
+
+}
