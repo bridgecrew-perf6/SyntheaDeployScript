@@ -309,3 +309,249 @@ CREATE QUERY providerTable(/* Parameters here */) FOR GRAPH synthea SYNTAX v2 {
   
   PRINT @@output; 
 }
+
+CREATE QUERY tg_label_prop (SET<STRING> v_type, SET<STRING> e_type, INT max_iter, INT output_limit, STRING attr = "") FOR GRAPH synthea { 
+
+# Partition the vertices into communities, according to the Label Propagation method.
+# Indicate community membership by assigning each vertex a community ID.
+        TYPEDEF tuple<STRING id, STRING label, STRING img,BOOL isLeaf> nodesList;
+        TYPEDEF tuple<STRING source, STRING targets> edgesList;
+        OrAccum @@changed = true;
+        MapAccum<INT, INT> @map;     # <communityId, numNeighbors>
+        MapAccum<INT, INT> @@commSizes;   # <communityId, members>
+        SumAccum<INT> @label, @num;  
+        ListAccum<VERTEX> @@nod;
+        ListAccum<EDGE> @@edgeList;
+        Start = {v_type};
+
+# Assign unique labels to each vertex
+        Start = SELECT s FROM Start:s ACCUM s.@label = getvid(s);
+
+# Propagate labels to neighbors until labels converge or the max iterations is reached
+        WHILE @@changed == true LIMIT max_iter DO
+                @@changed = false;
+                Start = SELECT s 
+                        FROM Start:s -(e_type:e)-> :t
+                        ACCUM t.@map += (s.@label -> 1),@@edgeList+=e,@@nod+=t# count the occurrences of neighbor's labels
+                        
+                        POST-ACCUM
+                                INT maxV = 0,
+                                INT label = 0,
+                                 
+                                # Iterate over the map to get the neighbor label that occurs most often
+                                FOREACH (k,v) IN t.@map DO
+                                        CASE WHEN v > maxV THEN
+                                                maxV = v,
+                                                label = k
+                                        END
+                                END,
+                                # When the neighbor search finds a label AND it is a new label
+                                # AND the label's count has increased, update the label.
+                                CASE WHEN label != 0 AND t.@label != label AND maxV > t.@num THEN
+                                        @@changed += true,
+                                        t.@label = label,
+                                        t.@num = maxV
+                                END,
+                                t.@map.clear();
+        END;
+
+        Start = {v_type};
+        Start =  SELECT s FROM Start:s
+                  POST-ACCUM 
+                         @@commSizes += (s.@label -> 1) 
+                  LIMIT output_limit;
+
+        
+           PRINT @@commSizes;
+           PRINT Start;
+           PRINT @@edgeList;
+           PRINT @@nod;
+          
+}
+
+CREATE QUERY getPatientMap(VERTEX<Patient> inPatient) FOR GRAPH synthea { 
+  /* 
+      Test on Synthea Patient : 0af23066-32ac-44b5-b577-71d9f727c770
+  */ 
+  TYPEDEF TUPLE<STRING source, STRING title, STRING content, DATETIME dt> element;
+  HeapAccum<element>(100000, dt DESC) @@outputDesc;
+  HeapAccum<element>(100000, dt ASC) @@fullTimeline;
+  ListAccum<STRING> @@dates;
+  ListAccum<VERTEX> @@v;
+  ListAccum<EDGE> @@e;
+  SetAccum<STRING> @@UniqueDates;
+  ListAccum<STRING> @@AllDates;
+  DATETIME firstActive;
+  DATETIME lastActive;
+
+  
+  singleton = {inPatient};
+  
+
+  // Following part handles single and all dates   
+  res = select re from singleton:s - ((ENCOUNTER_FOR_PATIENT|OBSERVATION_FOR_PATIENT|PATIENT_HAS_IMMUNIZATION|PATIENT_HAS_CONDITION|PATIENT_HAS_ALLERGY|    PATIENT_HAS_MEDICATION):e) - :re 
+  ACCUM 
+    @@v += re, 
+    @@e += e,  
+    IF re.type == "Observations" THEN 
+        IF month(re.dateOfObservation) < 10 THEN 
+            IF day(re.dateOfObservation) < 10 THEN 
+                @@UniqueDates += to_string(year(re.dateOfObservation))+"-0"+ to_string(month(re.dateOfObservation)) + "-0" + to_string(day(re.dateOfObservation))   ,
+                @@AllDates += to_string(year(re.dateOfObservation))+"-0"+ to_string(month(re.dateOfObservation)) + "-0" + to_string(day(re.dateOfObservation))    
+            ELSE
+                @@UniqueDates += to_string(year(re.dateOfObservation))+"-0"+ to_string(month(re.dateOfObservation)) + "-" + to_string(day(re.dateOfObservation))   ,
+                @@AllDates += to_string(year(re.dateOfObservation))+"-0"+ to_string(month(re.dateOfObservation)) + "-" + to_string(day(re.dateOfObservation))
+            END
+        ELSE 
+            IF day(re.dateOfObservation) < 10 THEN 
+                @@UniqueDates += to_string(year(re.dateOfObservation))+"-"+ to_string(month(re.dateOfObservation)) + "-0" + to_string(day(re.dateOfObservation))     ,
+                @@AllDates += to_string(year(re.dateOfObservation))+"-"+ to_string(month(re.dateOfObservation)) + "-0" + to_string(day(re.dateOfObservation))
+            ELSE
+                @@UniqueDates += to_string(year(re.dateOfObservation))+"-"+ to_string(month(re.dateOfObservation)) + "-" + to_string(day(re.dateOfObservation))    ,
+                @@AllDates += to_string(year(re.dateOfObservation))+"-"+ to_string(month(re.dateOfObservation)) + "-" + to_string(day(re.dateOfObservation))   
+            END
+        END
+    ELSE IF re.type == "Encounter" THEN 
+        IF month(re.startTime) < 10 THEN 
+            IF day(re.startTime) < 10 THEN 
+                @@UniqueDates += to_string(year(re.startTime))+"-0"+ to_string(month(re.startTime)) + "-0" + to_string(day(re.startTime))   ,
+                @@AllDates += to_string(year(re.startTime))+"-0"+ to_string(month(re.startTime)) + "-0" + to_string(day(re.startTime))    
+            ELSE
+                @@UniqueDates += to_string(year(re.startTime))+"-0"+ to_string(month(re.startTime)) + "-" + to_string(day(re.startTime))   ,
+                @@AllDates += to_string(year(re.startTime))+"-0"+ to_string(month(re.startTime)) + "-" + to_string(day(re.startTime))
+            END
+        ELSE 
+            IF day(re.startTime) < 10 THEN 
+                @@UniqueDates += to_string(year(re.startTime))+"-"+ to_string(month(re.startTime)) + "-0" + to_string(day(re.startTime))     ,
+                @@AllDates += to_string(year(re.startTime))+"-"+ to_string(month(re.startTime)) + "-0" + to_string(day(re.startTime))
+            ELSE
+                @@UniqueDates += to_string(year(re.startTime))+"-"+ to_string(month(re.startTime)) + "-" + to_string(day(re.startTime))    ,
+                @@AllDates += to_string(year(re.startTime))+"-"+ to_string(month(re.startTime)) + "-" + to_string(day(re.startTime))   
+            END
+        END
+    ELSE IF re.type == "Conditions" THEN 
+        IF month(re.startDate) < 10 THEN 
+            IF day(re.startDate) < 10 THEN 
+                @@UniqueDates += to_string(year(re.startDate))+"-0"+ to_string(month(re.startDate)) + "-0" + to_string(day(re.startDate))   ,
+                @@AllDates += to_string(year(re.startDate))+"-0"+ to_string(month(re.startDate)) + "-0" + to_string(day(re.startDate))    
+            ELSE
+                @@UniqueDates += to_string(year(re.startDate))+"-0"+ to_string(month(re.startDate)) + "-" + to_string(day(re.startDate))   ,
+                @@AllDates += to_string(year(re.startDate))+"-0"+ to_string(month(re.startDate)) + "-" + to_string(day(re.startDate))
+            END
+        ELSE 
+            IF day(re.startDate) < 10 THEN 
+                @@UniqueDates += to_string(year(re.startDate))+"-"+ to_string(month(re.startDate)) + "-0" + to_string(day(re.startDate))     ,
+                @@AllDates += to_string(year(re.startDate))+"-"+ to_string(month(re.startDate)) + "-0" + to_string(day(re.startDate))
+            ELSE
+                @@UniqueDates += to_string(year(re.startDate))+"-"+ to_string(month(re.startDate)) + "-" + to_string(day(re.startDate))    ,
+                @@AllDates += to_string(year(re.startDate))+"-"+ to_string(month(re.startDate)) + "-" + to_string(day(re.startDate))   
+            END
+        END
+    ELSE IF re.type == "Immunizations" THEN 
+        IF month(re.dateOfImmunization) < 10 THEN 
+            IF day(re.dateOfImmunization) < 10 THEN 
+                @@UniqueDates += to_string(year(re.dateOfImmunization))+"-0"+ to_string(month(re.dateOfImmunization)) + "-0" + to_string(day(re.dateOfImmunization))   ,
+                @@AllDates += to_string(year(re.dateOfImmunization))+"-0"+ to_string(month(re.dateOfImmunization)) + "-0" + to_string(day(re.dateOfImmunization))    
+            ELSE
+                @@UniqueDates += to_string(year(re.dateOfImmunization))+"-0"+ to_string(month(re.dateOfImmunization)) + "-" + to_string(day(re.dateOfImmunization))   ,
+                @@AllDates += to_string(year(re.dateOfImmunization))+"-0"+ to_string(month(re.dateOfImmunization)) + "-" + to_string(day(re.dateOfImmunization))
+            END
+        ELSE 
+            IF day(re.dateOfImmunization) < 10 THEN 
+                @@UniqueDates += to_string(year(re.dateOfImmunization))+"-"+ to_string(month(re.dateOfImmunization)) + "-0" + to_string(day(re.dateOfImmunization))     ,
+                @@AllDates += to_string(year(re.dateOfImmunization))+"-"+ to_string(month(re.dateOfImmunization)) + "-0" + to_string(day(re.dateOfImmunization))
+            ELSE
+                @@UniqueDates += to_string(year(re.dateOfImmunization))+"-"+ to_string(month(re.dateOfImmunization)) + "-" + to_string(day(re.dateOfImmunization))    ,
+                @@AllDates += to_string(year(re.dateOfImmunization))+"-"+ to_string(month(re.dateOfImmunization)) + "-" + to_string(day(re.dateOfImmunization))   
+            END
+        END
+    END;
+
+  #print res,@@v,@@e;
+  print  @@UniqueDates,@@AllDates;
+}
+
+CREATE QUERY dashboardQuery(/* Parameters here */) FOR GRAPH synthea { 
+  /* Write query logic here */ 
+  TYPEDEF TUPLE<STRING Patient,STRING Medication_code,DOUBLE baseCost,DOUBLE payerCoverage,DOUBLE totalCosts,DATETIME paymentDate> payments;
+  ListAccum<ListAccum<DOUBLE>> @@geoLoc;
+  ListAccum<payments> @@PaymentHistory;
+  SumAccum<INT> @@patients;
+  SumAccum<INT> @@providers;
+  MapAccum<STRING,INT> @@race;
+  start = {Patient.*};
+  res = select s from start:s -(PATIENT_HAS_MEDICATION:pm)-Medication:M
+        ACCUM 
+            @@PaymentHistory += payments(s.firstName+" "+s.lastName,M.medication_code,M.baseCost,M.payerCoverage,M.totalCost,M.startDate);
+        
+  res = select s from start:s
+        ACCUM 
+           @@patients+=1;
+    res = select r from start:s -(PATIENT_RACE:e) - Race:r
+        ACCUM 
+          @@race += (r.race_id -> 1);
+           
+  addr = {Address.*};
+  res = select s from addr:s
+        ACCUM 
+           @@geoLoc += [s.lon,s.lat,2];
+  
+  provd = {Providers.*};
+  res = select s from provd:s
+        ACCUM 
+           @@providers+= 1; 
+  print @@patients,@@providers,@@geoLoc,@@race,@@PaymentHistory;
+}
+
+CREATE QUERY getPatientGraph(VERTEX<Patient> patientID) FOR GRAPH synthea { 
+  /* Write query logic here */ 
+  TYPEDEF tuple<STRING id, STRING label, STRING img,BOOL isLeaf> nodesList;
+  TYPEDEF tuple<STRING source, STRING targets> edgesList;
+  SetAccum <VERTEX> @@all_v;
+  SetAccum <EDGE> @@all_edges;
+  MapAccum<STRING, INT> @@intMapAccum;
+  SetAccum<STRING> @@address;
+  ListAccum<nodesList> @@nod;
+  ListAccum<edgesList> @@edg;
+  VERTEX v;
+  
+  start = {patientID};
+  
+  
+  res = select s from start:s -(:e) -  :re
+       ACCUM @@all_edges += e,
+             @@all_v += re,
+             @@intMapAccum += (re.type -> 1)
+        POST-ACCUM
+             IF re.type == "Address" THEN 
+                @@nod += nodesList(re.address_id, re.name, "https://cdn-icons-png.flaticon.com/512/854/854878.png",FALSE) ,
+                @@edg += edgesList(patientID.patient_id,re.address_id),
+                @@address += re.address_id
+             ELSE IF re.type == "Conditions" THEN 
+                @@nod += nodesList(re.condition_id, re.condition_code, "https://cdn-icons-png.flaticon.com/512/881/881760.png",FALSE),
+                @@edg += edgesList(patientID.patient_id,re.condition_id)
+             ELSE IF re.type == "Allergies" THEN 
+                @@nod += nodesList(re.allergy_id, re.allergy_code, "https://cdn-icons-png.flaticon.com/512/1546/1546171.png",FALSE),
+                @@edg += edgesList(patientID.patient_id,re.allergy_id)
+             ELSE IF re.type == "Device" THEN 
+                @@nod += nodesList(re.UDI_code, re.description, "https://cdn-icons-png.flaticon.com/512/3567/3567018.png",FALSE),
+                @@edg += edgesList(patientID.patient_id,re.UDI_code)
+             ELSE IF re.type == "Gender" THEN 
+                @@nod += nodesList(re.gender_id, re.gender_id, "https://cdn-icons-png.flaticon.com/512/2545/2545910.png",FALSE),
+                @@edg += edgesList(patientID.patient_id,re.gender_id)
+                
+             END;
+  /*       
+  FOREACH vid in @@address DO 
+               
+               start2 = {Gender.*};
+               res2 = select s from start2:s -(PROVIDER_GENDER:e) -  Providers:re where s.gender_id == vid
+                  POST-ACCUM
+                     
+                          @@nod += nodesList(re.provider_id, re.name, "https://cdn-icons-png.flaticon.com/512/2966/2966486.png",TRUE),
+                          @@edg += edgesList(vid,re.provider_id);
+                      
+          END;
+          */
+  print @@intMapAccum,@@nod as nodes, @@edg as edges ;
+}
